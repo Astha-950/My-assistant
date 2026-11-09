@@ -195,3 +195,4 @@ def test_voice_confirm_hook(perm_manager: PermissionManager) -> None:
 
     # Test voice confirm when no confirmation active returns False
     assert perm_manager.voice_confirm(True) is False
+

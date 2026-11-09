@@ -182,3 +182,4 @@ def test_toggle_feature_method(controller: AssistantController) -> None:
     res2 = controller.toggle_feature("voice")
     assert res2 is False
     assert controller.is_feature_on("voice") is False
+
