@@ -83,6 +83,8 @@ def main() -> None:
     # 8. Clean shutdown coordinator with hard-exit fallback
     shutdown_lock = threading.Lock()
     is_shutting_down = False
+    stop_event = threading.Event()
+    tray: Optional[TrayApp] = None
 
     def initiate_shutdown(exit_code: int = 0) -> None:
         nonlocal is_shutting_down
@@ -90,6 +92,7 @@ def main() -> None:
             if is_shutting_down:
                 return
             is_shutting_down = True
+            stop_event.set()
 
         # Watchdog: hard-exit after 5 seconds if graceful cleanup blocks
         def watchdog() -> None:
@@ -107,10 +110,11 @@ def main() -> None:
 
         cleanup()
 
-        try:
-            tray.stop()
-        except Exception as e:
-            logger.debug("Error stopping tray during shutdown: %s", e)
+        if tray is not None:
+            try:
+                tray.stop()
+            except Exception as e:
+                logger.debug("Error stopping tray during shutdown: %s", e)
 
         logger.info("HP Assistant shutdown complete. Exiting process.")
         os._exit(exit_code)
@@ -143,10 +147,10 @@ def main() -> None:
         logger.error("Error starting detached system tray: %s", e)
         initiate_shutdown(1)
 
-    # Main thread polling loop allows instantaneous Ctrl+C interception on Windows
+    # 11. Main thread loop waits in short intervals so Ctrl+C is caught promptly
     try:
-        while not is_shutting_down:
-            time.sleep(0.2)
+        while not stop_event.is_set():
+            stop_event.wait(0.5)
     except KeyboardInterrupt:
         logger.info("KeyboardInterrupt (Ctrl+C) caught on main thread.")
         initiate_shutdown(0)

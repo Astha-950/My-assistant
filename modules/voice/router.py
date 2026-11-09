@@ -15,19 +15,40 @@ from core.tts import speak
 class CommandRouter:
     """
     Parses and routes recognized voice commands.
+    Only allows command handling in ACTIVE state.
     """
 
-    def __init__(self, controller: Optional[Any] = None, logger: Optional[logging.Logger] = None) -> None:
+    def __init__(
+        self,
+        controller: Optional[Any] = None,
+        state_machine: Optional[Any] = None,
+        logger: Optional[logging.Logger] = None,
+    ) -> None:
         self.controller = controller
+        self.state_machine = state_machine
         self._logger = logger or logging.getLogger("HP_Assistant.VoiceRouter")
 
-    def handle(self, phrase: str) -> bool:
+    def handle(self, phrase: str, state: Optional[str] = None) -> bool:
         """
         Process recognized speech string.
         Returns True if a command was handled, False otherwise.
+        Guarded: Commands can only run when voice state is ACTIVE.
         """
         if not phrase or not phrase.strip():
             return False
+
+        # State guard: Commands can ONLY execute when state is ACTIVE
+        check_state = state
+        if check_state is None and self.state_machine is not None:
+            if hasattr(self.state_machine, "is_active") and not self.state_machine.is_active:
+                st = getattr(self.state_machine, "current_state", "NotActive")
+                st_val = getattr(st, "value", str(st))
+                self._logger.warning("Command execution blocked: Voice state is %s (must be Active).", st_val)
+                return False
+        elif check_state is not None:
+            if "active" not in str(check_state).lower():
+                self._logger.warning("Command execution blocked: Explicit state %s is not Active.", check_state)
+                return False
 
         text = phrase.strip().lower()
         self._logger.info("Processing voice command: '%s'", text)

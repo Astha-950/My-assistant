@@ -1,6 +1,6 @@
 {
   "app_name": "HP Assistant",
-  "version": "2.0.0",
+  "version": "2.2.0",
   "hotkey_enabled": false,
   "hotkey": "ctrl+alt+h",
   "beep_on_toggle": true,
@@ -16,6 +16,18 @@
     "tts_voice": "en-IN-NeerjaNeural",
     "sample_rate": 16000,
     "session_timeout_seconds": 60,
+    "pause_timeout_minutes": 10,
+    "pause_phrases": [
+      "pause"
+    ],
+    "resume_phrases": [
+      "h p resume",
+      "hp resume"
+    ],
+    "paused_sleep_phrases": [
+      "h p sleep",
+      "hp sleep"
+    ],
     "sleep_phrases": [
       "go to sleep",
       "sleep",

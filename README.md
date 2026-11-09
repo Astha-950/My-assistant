@@ -1,10 +1,79 @@
-# HP Assistant - Stage 2.1
+# HP Assistant - Stage 2.2
 
 HP Assistant is a modular, privacy-first desktop assistant designed for Windows.
 
-This repository represents **Stage 2.1: Voice Pipeline & Continuous Session Mode** (built on top of Stage 1 and Stage 1.5). It delivers a robust hands-free voice loop with continuous multi-command session mode, instant restart recovery, and graceful process termination.
+This repository represents **Stage 2.2: Three-State Voice Machine (ACTIVE, PAUSED, SLEEP)** (built on top of Stage 1, Stage 1.5, and Stage 2.1). It provides a full voice state machine with distinct audio beeps, restricted offline grammar in paused mode, dynamic tray status tooltips, and transition audit logging.
 
-> **Stage 2.1 Scope:** Implements the voice pipeline (`wake phrase -> continuous session listen -> STT -> TTS`), restart resilience across unlimited ON/OFF cycles, Ctrl+C shutdown, and session control (`"go to sleep"` / timeout). Camera, gestures, and real laptop-control actions will be introduced in subsequent stages.
+> **Stage 2.2 Scope:** Implements the explicit 3-state voice machine (`ACTIVE`, `PAUSED`, `SLEEP`), distinct audio cues, tray tooltip status (`Voice: Active / Paused / Sleeping`), and offline pause/resume recognition. Camera, gestures, and real laptop-control actions will be introduced in subsequent stages.
+
+---
+
+## Three Voice States (Stage 2.2)
+
+```text
+               "wake up HP"
+  +-------------------------------------+
+  |                                     |
+  v                                     |
++-------------------+  "pause"   +-------------------+
+|      ACTIVE       | ---------> |      PAUSED       |
+| (Continuous STT)  | <--------- | (Offline Vosk     |
++-------------------+ "HP resume"|  Restricted Only) |
+  |           |                  +-------------------+
+  |           |                     |             |
+  | "sleep"   | 60s silence         | "HP sleep"  | 10m timeout
+  v           v                     v             v
++----------------------------------------------------+
+|                       SLEEP                        |
+|        (Offline Vosk Wake-Word Only)               |
++----------------------------------------------------+
+```
+
+### 1. ACTIVE (Continuous Listening & Command Routing)
+- Continuously listens for commands without needing wake words between phrases.
+- **Phrases & Actions**:
+  - Say `"pause"` &rarr; Transitions to **PAUSED**. Plays pause chime and speaks *"Paused."*. If an active permission confirmation popup is currently open, it is automatically denied.
+  - Say `"go to sleep"` / `"sleep"` &rarr; Transitions to **SLEEP**. Plays sleep chime.
+  - Say `"stop listening"` &rarr; Turns Voice feature completely OFF.
+  - Regular commands (e.g., `"what time is it"`, `"hello"`, permission confirmations `"yes"`/`"no"`) execute normally through `CommandRouter`.
+- **Inactivity Timeout**: If no speech is heard for `session_timeout_seconds` (default: 60s), automatically transitions to **SLEEP**.
+
+### 2. PAUSED (Offline Restricted Standby)
+- **Privacy & Safety Guarantee**:
+  - Zero audio is sent to Google.
+  - No commands are executed (`CommandRouter` rejects all commands).
+- **Offline Restricted Recognition**:
+  - Listens strictly through local Vosk offline recognizer with restricted grammar (`["h p resume", "hp resume", "h p sleep", "hp sleep", "[unk]"]`).
+  - Say `"HP resume"` &rarr; Transitions to **ACTIVE**. Plays resume chime and speaks *"Resumed."*.
+  - Say `"HP sleep"` &rarr; Transitions to **SLEEP**. Plays sleep chime.
+- **Pause Timeout**: If paused for longer than `pause_timeout_minutes` (default: 10 minutes), automatically transitions to **SLEEP**.
+
+### 3. SLEEP (Offline Wake-Phrase Detection)
+- Listens only for the wake phrase `"wake up HP"` using the local Vosk offline recognizer.
+- Zero audio is sent online.
+- Say `"wake up HP"` &rarr; Transitions to **ACTIVE**. Plays start chime and begins continuous session.
+
+---
+
+## Audio Feedback & Status Indicators
+
+- **Distinct Audio Cues**:
+  - **Session Start**: High chime (1200 Hz).
+  - **Pause**: Descending two-tone chime (850 Hz &rarr; 600 Hz).
+  - **Resume**: Ascending two-tone chime (600 Hz &rarr; 850 Hz).
+  - **Sleep**: Low chime (450 Hz).
+- **Dynamic Tray Tooltip**:
+  - Shows current voice state in real time:
+    - `HP Assistant - ON [Voice: Active]`
+    - `HP Assistant - ON [Voice: Paused]`
+    - `HP Assistant - ON [Voice: Sleeping]`
+    - `HP Assistant - ON [Voice: OFF]`
+    - `HP Assistant - OFF`
+- **Audit Logging**:
+  - Every state transition is recorded in `logs/audit.log` with timestamp, from-state, to-state, and trigger reason:
+    ```text
+    2026-11-09 19:45:42 | ACTION: voice_state_transition | LEVEL: safe | RESULT: Active->Paused | DETAILS: from=Active, to=Paused, reason=user_pause
+    ```
 
 ---
 
@@ -122,43 +191,63 @@ Maps recognized phrases to handlers:
 
 ---
 
-## How to Test by Speaking (Session Mode & Toggles)
+## How to Test the Voice State Transitions
 
 1. **Launch the Assistant**:
    ```powershell
    python main.py
    ```
 2. **Turn on Master and Voice**:
-   - Right-click the red tray icon &rarr; click **Turn ON** (icon turns green).
-   - Right-click the tray icon &rarr; click **Voice: OFF** (turns into `Voice: ON` with a checkmark, tooltip shows `[Mic Active]`).
-3. **Session Mode (Multiple Commands after 1 Wake)**:
-   - Say the wake phrase once:
+   - Right-click red tray icon &rarr; **Turn ON** (icon turns green).
+   - Right-click tray icon &rarr; **Voice: OFF** (turns into `Voice: ON` with a checkmark; tooltip shows `HP Assistant - ON [Voice: Sleeping]`).
+
+3. **Transition 1: SLEEP &rarr; ACTIVE**:
+   - Say:
      > *"Wake up HP"*
-   - You will hear a high chime (1200 Hz). The assistant is now in an **active session**!
-   - Issue multiple commands continuously without repeating the wake phrase:
-     - Command 1: *"What time is it"* &rarr; Assistant answers time.
-     - Command 2: *"Hello"* &rarr; Assistant responds: *"Hello! How can I help you?"*
-   - End the session by saying:
+   - **Feedback**: High start chime (1200 Hz).
+   - **Tooltip**: Updates to `HP Assistant - ON [Voice: Active]`.
+   - Assistant listens continuously for commands.
+
+4. **Transition 2: ACTIVE &rarr; PAUSED**:
+   - While in active session, say:
+     > *"Pause"*
+   - **Feedback**: Descending pause chime (850 Hz &rarr; 600 Hz), assistant speaks *"Paused."*.
+   - **Tooltip**: Updates to `HP Assistant - ON [Voice: Paused]`.
+   - **Privacy Guard**: Microphone is kept open locally for offline Vosk only; no commands run and zero audio is sent online.
+   - If a permission confirmation popup was waiting, it is automatically denied.
+
+5. **Transition 3: PAUSED &rarr; ACTIVE**:
+   - While paused, say:
+     > *"HP resume"*
+   - **Feedback**: Ascending resume chime (600 Hz &rarr; 850 Hz), assistant speaks *"Resumed."*.
+   - **Tooltip**: Updates to `HP Assistant - ON [Voice: Active]`.
+
+6. **Transition 4: PAUSED &rarr; SLEEP**:
+   - From paused state, say:
+     > *"HP sleep"*
+   - **Feedback**: Low sleep chime (450 Hz), assistant speaks *"Going to sleep."*.
+   - **Tooltip**: Updates to `HP Assistant - ON [Voice: Sleeping]`.
+
+7. **Transition 5: ACTIVE &rarr; SLEEP**:
+   - While in active session, say:
      > *"Go to sleep"* (or *"sleep"*)
-   - You will hear a lower chime (600 Hz). The assistant exits the session and returns to waiting for the wake phrase.
-   - Alternatively, staying silent for 60 seconds (or `session_timeout_seconds`) will automatically time out and close the session.
-4. **Test Unlimited Start/Stop Cycling**:
-   - In the tray, click **Voice: ON** to turn it OFF, then ON again.
-   - Repeat this 5+ times. The wake phrase will detect normally every time because fresh stream and Vosk recognizer objects are instantiated on every cycle.
-5. **Test Clean Ctrl+C**:
-   - In the terminal running `main.py`, press `Ctrl+C`.
-   - The application intercepts `SIGINT`, unhooks resources, turns off the controller, and terminates cleanly within 3 seconds.
+   - **Feedback**: Low sleep chime (450 Hz), assistant speaks *"Going to sleep."*.
+   - **Tooltip**: Updates to `HP Assistant - ON [Voice: Sleeping]`.
+
+8. **Transition 6: Timeouts**:
+   - In **ACTIVE** state: Remain silent for 60 seconds &rarr; low sleep chime plays, transitions to **SLEEP**.
+   - In **PAUSED** state: Inactivity for 10 minutes &rarr; low sleep chime plays, transitions to **SLEEP**.
 
 ---
 
 ## Running Tests
 
-Execute the full pytest suite (45 tests):
+Execute the full pytest suite (53 tests):
 ```powershell
 pytest -v
 ```
 
-To run the voice module tests specifically:
+To run the voice module tests specifically (19 tests):
 ```powershell
 pytest tests/test_voice_module.py -v
 ```

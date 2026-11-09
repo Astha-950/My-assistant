@@ -112,6 +112,24 @@ class AssistantController:
                 for feat in self._features
             }
 
+    def notify_state_change(self) -> None:
+        """Trigger state change notification to listeners (e.g. for sub-state updates)."""
+        with self._lock:
+            is_on = self._is_on
+        self._notify_listeners(is_on)
+
+    def get_voice_state(self) -> str:
+        """
+        Returns string representing current voice state ('Active', 'Paused', 'Sleeping', or 'OFF').
+        """
+        with self._lock:
+            if not self._is_on or not self._features.get("voice", False):
+                return "OFF"
+            for module, mod_feat in self._modules:
+                if mod_feat == "voice" and hasattr(module, "current_state_name"):
+                    return module.current_state_name
+            return "Sleeping"
+
     def register_module(self, module: Any, feature: Optional[str] = None) -> None:
         """
         Register a module that implements start() and stop().

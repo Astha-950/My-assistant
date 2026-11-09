@@ -75,6 +75,7 @@ class TrayApp:
         self.config = config
         self._cleanup_callback = cleanup_callback
         self._logger = logger or logging.getLogger("HP_Assistant.Tray")
+        self._tray_thread: Optional[threading.Thread] = None
 
         # Cache pre-rendered icons
         self._icon_on = create_tray_icon_image(is_on=True)
@@ -117,9 +118,18 @@ class TrayApp:
         self.controller.add_listener(self._on_state_changed)
 
     def _get_title(self) -> str:
-        """Dynamic tooltip title indicating master state and active mic status."""
-        mic_indicator = " [Mic Active]" if self.controller.is_feature_on("voice") else ""
-        return f"HP Assistant - {self.controller.state_name}{mic_indicator}"
+        """Dynamic tooltip title indicating master state and voice state (Voice: Active / Paused / Sleeping)."""
+        if not self.controller.is_on:
+            return f"HP Assistant - {self.controller.state_name}"
+
+        if not self.controller.is_feature_on("voice"):
+            return "HP Assistant - ON [Voice: OFF]"
+
+        voice_state_str = "Sleeping"
+        if hasattr(self.controller, "get_voice_state"):
+            voice_state_str = self.controller.get_voice_state()
+
+        return f"HP Assistant - ON [Voice: {voice_state_str}]"
 
     def _on_state_changed(self, is_on: bool) -> None:
         """Handle state change event from controller."""
@@ -235,7 +245,29 @@ class TrayApp:
         self._logger.info("Starting system tray loop...")
         self._icon.run()
 
-    def stop(self) -> None:
-        """Stop system tray icon."""
+    def run_detached(self) -> None:
+        """
+        Start the pystray icon in a detached daemon thread and return immediately.
+        Allows the main thread to run its own loop and handle signals (Ctrl+C).
+        """
+        if self._tray_thread is not None and self._tray_thread.is_alive():
+            self._logger.debug("Tray is already running detached.")
+            return
+
+        self._logger.info("Starting system tray loop in detached daemon thread...")
         if self._icon:
-            self._icon.stop()
+            self._tray_thread = threading.Thread(
+                target=self._icon.run,
+                name="TrayDaemonThread",
+                daemon=True,
+            )
+            self._tray_thread.start()
+
+    def stop(self) -> None:
+        """Stop system tray icon and clean up resources."""
+        self._logger.info("Stopping system tray...")
+        if self._icon:
+            try:
+                self._icon.stop()
+            except Exception as e:
+                self._logger.debug("Error stopping tray icon: %s", e)
