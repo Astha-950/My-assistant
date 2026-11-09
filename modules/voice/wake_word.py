@@ -1,7 +1,6 @@
 """
 Offline wake word detection using Vosk with restricted grammar.
-Downloads small English model on first run into models/ (git-ignored).
-Only processes audio locally until wake phrase is detected.
+Creates a fresh KaldiRecognizer on every start to prevent stale state issues.
 """
 
 import json
@@ -47,7 +46,7 @@ def ensure_vosk_model(model_name: str, model_url: str, models_root: str = "model
 class VoskWakeDetector:
     """
     Offline wake-word engine.
-    Uses restricted grammar so Vosk strictly listens for the wake phrase.
+    Always creates a fresh KaldiRecognizer on each run to support unlimited cycles.
     """
 
     def __init__(self, config: Optional[Dict[str, Any]] = None, logger: Optional[logging.Logger] = None) -> None:
@@ -69,36 +68,42 @@ class VoskWakeDetector:
 
         self._model: Optional[vosk.Model] = None
         self._recognizer: Optional[vosk.KaldiRecognizer] = None
-        self._initialized = False
 
     def initialize(self) -> bool:
-        """Load Vosk model and initialize KaldiRecognizer with restricted grammar."""
-        if self._initialized:
-            return True
-
+        """Ensure model is loaded and create a fresh recognizer."""
         try:
-            model_path = ensure_vosk_model(self.model_name, self.model_url)
-            self._model = vosk.Model(model_path)
-            self._recognizer = vosk.KaldiRecognizer(self._model, self.sample_rate, self.grammar_json)
-            self._recognizer.SetWords(False)
-            self._initialized = True
-            self._logger.info("Vosk wake word detector initialized for '%s'.", self.wake_word)
+            if self._model is None:
+                model_path = ensure_vosk_model(self.model_name, self.model_url)
+                self._model = vosk.Model(model_path)
+
+            # Always create a brand-new KaldiRecognizer instance
+            self.create_fresh_recognizer()
             return True
         except Exception as e:
-            self._logger.error("Failed to initialize Vosk wake detector: %s", e)
+            self._logger.error("Failed to initialize Vosk model: %s", e)
             return False
 
+    def create_fresh_recognizer(self) -> None:
+        """Create a fresh recognizer instance, discarding any previous decoder state."""
+        if self._model is not None:
+            self._recognizer = vosk.KaldiRecognizer(self._model, self.sample_rate, self.grammar_json)
+            self._recognizer.SetWords(False)
+            self._logger.info("Fresh Vosk KaldiRecognizer instance created.")
+
     def reset(self) -> None:
-        """Reset recognizer state."""
+        """Reset or recreate recognizer."""
         if self._recognizer:
-            self._recognizer.Reset()
+            try:
+                self._recognizer.Reset()
+            except Exception:
+                self.create_fresh_recognizer()
 
     def process_chunk(self, pcm_bytes: bytes) -> bool:
         """
         Process a chunk of 16kHz 16-bit mono audio.
         Returns True if the wake phrase was detected, False otherwise.
         """
-        if not self._initialized or not self._recognizer:
+        if not self._recognizer:
             return False
 
         try:

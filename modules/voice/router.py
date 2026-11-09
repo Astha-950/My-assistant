@@ -75,3 +75,4 @@ class CommandRouter:
         speak("I heard: " + text + ". No command matched.")
         permissions._write_audit_log("unknown_voice_command", "confirm", "denied", f"Unrecognized phrase: {text}")
         return False
+

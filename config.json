@@ -14,7 +14,13 @@
     "stt_language": "en-IN",
     "stt_timeout_seconds": 6,
     "tts_voice": "en-IN-NeerjaNeural",
-    "sample_rate": 16000
+    "sample_rate": 16000,
+    "session_timeout_seconds": 60,
+    "sleep_phrases": [
+      "go to sleep",
+      "sleep",
+      "stop listening"
+    ]
   },
   "permissions": {
     "confirmation_timeout_seconds": 10,

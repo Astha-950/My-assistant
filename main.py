@@ -1,13 +1,16 @@
 """
-HP Assistant - Stage 2 Entry Point
+HP Assistant - Stage 2.1 Entry Point
 Desktop Assistant Skeleton, Master & Per-Feature Toggles, Security Permission Gateway,
-and Offline Wake-Phrase & Voice Processing Pipeline
+and Offline Wake-Phrase & Voice Processing Pipeline.
+Includes robust Ctrl+C signal handling, watchdog timeout, and clean process termination.
 """
 
 import logging
 import os
 import signal
 import sys
+import threading
+import time
 from typing import Optional
 
 from core.config import load_config, setup_logging
@@ -24,8 +27,8 @@ def main() -> None:
     # 2. Setup logging (logs/ folder, ignored by git)
     logger = setup_logging(config)
     logger.info("==========================================")
-    logger.info("Starting HP Assistant (Stage 2)")
-    logger.info("Version: %s", config.get("version", "2.0.0"))
+    logger.info("Starting HP Assistant (Stage 2.1)")
+    logger.info("Version: %s", config.get("version", "2.1.0"))
     logger.info("Default State: Master OFF | Voice OFF | Gestures OFF")
     logger.info("==========================================")
 
@@ -77,24 +80,53 @@ def main() -> None:
             "Zero keyboard or mouse hooks installed."
         )
 
-    # 8. Initialize Tray Application
+    # 8. Clean shutdown coordinator with hard-exit fallback
+    shutdown_lock = threading.Lock()
+    is_shutting_down = False
+
+    def initiate_shutdown(exit_code: int = 0) -> None:
+        nonlocal is_shutting_down
+        with shutdown_lock:
+            if is_shutting_down:
+                return
+            is_shutting_down = True
+
+        # Watchdog: hard-exit after 5 seconds if graceful cleanup blocks
+        def watchdog() -> None:
+            time.sleep(5.0)
+            logger.warning("Graceful shutdown exceeded 5 seconds. Forcing process exit.")
+            os._exit(exit_code)
+
+        threading.Thread(target=watchdog, name="ShutdownWatchdog", daemon=True).start()
+
+        logger.info("Initiating clean application shutdown...")
+        try:
+            controller.turn_off()
+        except Exception as e:
+            logger.error("Error stopping controller during shutdown: %s", e)
+
+        cleanup()
+
+        try:
+            tray.stop()
+        except Exception as e:
+            logger.debug("Error stopping tray during shutdown: %s", e)
+
+        logger.info("HP Assistant shutdown complete. Exiting process.")
+        os._exit(exit_code)
+
+    # 9. Initialize Tray Application
     tray = TrayApp(
         controller=controller,
         config=config,
-        cleanup_callback=cleanup,
+        cleanup_callback=lambda: initiate_shutdown(0),
         logger=logger,
     )
 
-    # Handle standard termination signals gracefully
+    # Signal handlers for SIGINT (Ctrl+C) and SIGTERM
     def handle_signal(sig: int, frame: Optional[object]) -> None:
-        logger.info("Termination signal received (%s). Exiting cleanly...", sig)
-        try:
-            controller.turn_off()
-        except Exception:
-            pass
-        cleanup()
-        tray.stop()
-        os._exit(0)
+        logger.info("Termination signal (%s) received.", sig)
+        initiate_shutdown(0)
 
     try:
         signal.signal(signal.SIGINT, handle_signal)
@@ -102,19 +134,22 @@ def main() -> None:
     except (ValueError, AttributeError):
         pass
 
-    logger.info("HP Assistant running in system tray. Right-click tray icon to manage.")
+    logger.info("HP Assistant running. Tray active in background. Press Ctrl+C to stop.")
 
-    # 9. Start tray icon (blocks until quit)
+    # 10. Start tray detached so the main thread processes signals
     try:
-        tray.run()
+        tray.run_detached()
     except Exception as e:
-        logger.error("Unexpected error in system tray loop: %s", e, exc_info=True)
-    finally:
-        try:
-            controller.turn_off()
-        except Exception:
-            pass
-        cleanup()
+        logger.error("Error starting detached system tray: %s", e)
+        initiate_shutdown(1)
+
+    # Main thread polling loop allows instantaneous Ctrl+C interception on Windows
+    try:
+        while not is_shutting_down:
+            time.sleep(0.2)
+    except KeyboardInterrupt:
+        logger.info("KeyboardInterrupt (Ctrl+C) caught on main thread.")
+        initiate_shutdown(0)
 
 
 if __name__ == "__main__":

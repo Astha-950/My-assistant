@@ -61,3 +61,4 @@ class SpeechToTextEngine:
         except Exception as e:
             self._logger.error("Unexpected error in speech recognition: %s", e)
             return None
+

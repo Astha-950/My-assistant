@@ -1,10 +1,10 @@
-# HP Assistant - Stage 2
+# HP Assistant - Stage 2.1
 
 HP Assistant is a modular, privacy-first desktop assistant designed for Windows.
 
-This repository represents **Stage 2: Voice Loop & Pipeline** (built on top of Stage 1: Skeleton & Master Toggle and Stage 1.5: Feature Toggles & Permission System). It delivers a complete hands-free voice loop: offline wake-phrase detection &rarr; speech recognition &rarr; command routing &rarr; text-to-speech response.
+This repository represents **Stage 2.1: Voice Pipeline & Continuous Session Mode** (built on top of Stage 1 and Stage 1.5). It delivers a robust hands-free voice loop with continuous multi-command session mode, instant restart recovery, and graceful process termination.
 
-> **Stage 2 Scope:** Implements the voice pipeline (`wake phrase -> listen -> STT -> TTS`). Camera, gestures, and real laptop-control actions will be introduced in subsequent stages.
+> **Stage 2.1 Scope:** Implements the voice pipeline (`wake phrase -> continuous session listen -> STT -> TTS`), restart resilience across unlimited ON/OFF cycles, Ctrl+C shutdown, and session control (`"go to sleep"` / timeout). Camera, gestures, and real laptop-control actions will be introduced in subsequent stages.
 
 ---
 
@@ -122,7 +122,7 @@ Maps recognized phrases to handlers:
 
 ---
 
-## How to Test by Speaking
+## How to Test by Speaking (Session Mode & Toggles)
 
 1. **Launch the Assistant**:
    ```powershell
@@ -131,28 +131,29 @@ Maps recognized phrases to handlers:
 2. **Turn on Master and Voice**:
    - Right-click the red tray icon &rarr; click **Turn ON** (icon turns green).
    - Right-click the tray icon &rarr; click **Voice: OFF** (turns into `Voice: ON` with a checkmark, tooltip shows `[Mic Active]`).
-3. **Test Wake Word and Commands**:
-   - Speak clearly into your microphone:
+3. **Session Mode (Multiple Commands after 1 Wake)**:
+   - Say the wake phrase once:
      > *"Wake up HP"*
-   - You will hear a short beep.
-   - Speak one of the test commands:
-     - **Time query**: *"What time is it"* &rarr; Assistant responds: *"The time is [current time]."*
-     - **Greeting**: *"Hello"* &rarr; Assistant responds: *"Hello! How can I help you?"*
-     - **Deactivate Voice**: *"Stop listening"* &rarr; Assistant responds: *"Stopping voice recognition."* and turns the Voice feature OFF.
-4. **Test Hands-Free Permission Confirmation**:
-   - In another terminal, trigger a confirm action:
-     ```powershell
-     python -c "from core.permissions import permissions; permissions.request('shutdown')"
-     ```
-   - While the popup is on screen, trigger the wake phrase:
-     > *"Wake up HP"* &rarr; (beep) &rarr; *"Confirm"* or *"Yes"*
-   - The popup closes with **Allow**!
+   - You will hear a high chime (1200 Hz). The assistant is now in an **active session**!
+   - Issue multiple commands continuously without repeating the wake phrase:
+     - Command 1: *"What time is it"* &rarr; Assistant answers time.
+     - Command 2: *"Hello"* &rarr; Assistant responds: *"Hello! How can I help you?"*
+   - End the session by saying:
+     > *"Go to sleep"* (or *"sleep"*)
+   - You will hear a lower chime (600 Hz). The assistant exits the session and returns to waiting for the wake phrase.
+   - Alternatively, staying silent for 60 seconds (or `session_timeout_seconds`) will automatically time out and close the session.
+4. **Test Unlimited Start/Stop Cycling**:
+   - In the tray, click **Voice: ON** to turn it OFF, then ON again.
+   - Repeat this 5+ times. The wake phrase will detect normally every time because fresh stream and Vosk recognizer objects are instantiated on every cycle.
+5. **Test Clean Ctrl+C**:
+   - In the terminal running `main.py`, press `Ctrl+C`.
+   - The application intercepts `SIGINT`, unhooks resources, turns off the controller, and terminates cleanly within 3 seconds.
 
 ---
 
 ## Running Tests
 
-Execute the full pytest suite (41 tests):
+Execute the full pytest suite (45 tests):
 ```powershell
 pytest -v
 ```

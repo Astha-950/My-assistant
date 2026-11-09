@@ -3,6 +3,7 @@ Text-to-Speech (TTS) engine for HP Assistant.
 Uses edge-tts (voice: en-IN-NeerjaNeural) with pygame playback.
 Mutes microphone while speaking so assistant does not hear itself.
 Provides offline fallback to pyttsx3.
+Safe loop and mixer management to support unlimited cycles without errors.
 """
 
 import asyncio
@@ -46,14 +47,17 @@ def _play_audio_file(file_path: str) -> None:
     """Play audio file using pygame.mixer and block until finished."""
     import pygame
 
-    if not pygame.mixer.get_init():
-        pygame.mixer.init()
+    try:
+        if not pygame.mixer.get_init():
+            pygame.mixer.init()
 
-    pygame.mixer.music.load(file_path)
-    pygame.mixer.music.play()
-    while pygame.mixer.music.get_busy():
-        time.sleep(0.05)
-    pygame.mixer.music.unload()
+        pygame.mixer.music.load(file_path)
+        pygame.mixer.music.play()
+        while pygame.mixer.music.get_busy():
+            time.sleep(0.04)
+        pygame.mixer.music.unload()
+    except Exception as e:
+        _logger.warning("Pygame playback issue: %s", e)
 
 
 def _fallback_pyttsx3(text: str) -> None:
@@ -71,6 +75,7 @@ def _fallback_pyttsx3(text: str) -> None:
 def speak(text: str, voice: Optional[str] = None) -> None:
     """
     Speak given text using edge-tts with pygame playback.
+    Creates a fresh asyncio loop per call to avoid closed loop issues.
     Mutes microphone while speaking to prevent self-triggering.
     Falls back to pyttsx3 if offline or if edge-tts fails.
     """
@@ -90,15 +95,22 @@ def speak(text: str, voice: Optional[str] = None) -> None:
             with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as f:
                 temp_path = f.name
 
+            # Create an isolated event loop for this synthesis call
+            loop = asyncio.new_event_loop()
             try:
-                # Run edge-tts asynchronously
-                asyncio.run(_synthesize_edge_tts(text, voice_name, temp_path))
-                _play_audio_file(temp_path)
-            except Exception as edge_err:
-                _logger.warning("edge-tts playback failed (%s). Attempting pyttsx3 fallback...", edge_err)
-                _fallback_pyttsx3(text)
-        except Exception as e:
-            _logger.error("Failed to speak text '%s': %s", text, e)
+                asyncio.set_event_loop(loop)
+                loop.run_until_complete(_synthesize_edge_tts(text, voice_name, temp_path))
+            finally:
+                try:
+                    loop.close()
+                except Exception:
+                    pass
+                asyncio.set_event_loop(None)
+
+            _play_audio_file(temp_path)
+        except Exception as edge_err:
+            _logger.warning("edge-tts playback failed (%s). Attempting pyttsx3 fallback...", edge_err)
+            _fallback_pyttsx3(text)
         finally:
             if temp_path and os.path.exists(temp_path):
                 try:
