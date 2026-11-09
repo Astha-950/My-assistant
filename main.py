@@ -1,6 +1,7 @@
 """
-HP Assistant - Stage 1.5 Entry Point
-Desktop Assistant Skeleton, Master & Per-Feature Toggles, and Security Permission Gateway
+HP Assistant - Stage 2 Entry Point
+Desktop Assistant Skeleton, Master & Per-Feature Toggles, Security Permission Gateway,
+and Offline Wake-Phrase & Voice Processing Pipeline
 """
 
 import logging
@@ -13,6 +14,7 @@ from core.config import load_config, setup_logging
 from core.controller import AssistantController, DummyModule
 from core.permissions import permissions
 from core.tray import TrayApp
+from modules.voice import VoiceModule
 
 
 def main() -> None:
@@ -22,8 +24,8 @@ def main() -> None:
     # 2. Setup logging (logs/ folder, ignored by git)
     logger = setup_logging(config)
     logger.info("==========================================")
-    logger.info("Starting HP Assistant (Stage 1.5)")
-    logger.info("Version: %s", config.get("version", "1.5.0"))
+    logger.info("Starting HP Assistant (Stage 2)")
+    logger.info("Version: %s", config.get("version", "2.0.0"))
     logger.info("Default State: Master OFF | Voice OFF | Gestures OFF")
     logger.info("==========================================")
 
@@ -39,7 +41,12 @@ def main() -> None:
     permissions.reload_config(config)
     logger.info("Permissions gateway loaded. Safe, Confirm, and Blocked tiers active.")
 
-    # 6. Hotkey management
+    # 6. Initialize Voice Module and register under feature "voice"
+    voice_module = VoiceModule(controller=controller, logger=logger)
+    controller.register_module(voice_module, feature="voice")
+    logger.info("VoiceModule registered under feature 'voice'.")
+
+    # 7. Hotkey management
     hotkey_enabled = config.get("hotkey_enabled", False)
     hotkey_str = config.get("hotkey", "ctrl+alt+h")
     hotkey_registered = False
@@ -70,7 +77,7 @@ def main() -> None:
             "Zero keyboard or mouse hooks installed."
         )
 
-    # 7. Initialize Tray Application
+    # 8. Initialize Tray Application
     tray = TrayApp(
         controller=controller,
         config=config,
@@ -97,7 +104,7 @@ def main() -> None:
 
     logger.info("HP Assistant running in system tray. Right-click tray icon to manage.")
 
-    # 8. Start tray icon (blocks until quit)
+    # 9. Start tray icon (blocks until quit)
     try:
         tray.run()
     except Exception as e:

@@ -10,13 +10,22 @@ from typing import Any, Dict
 
 DEFAULT_CONFIG: Dict[str, Any] = {
     "app_name": "HP Assistant",
-    "version": "1.5.0",
+    "version": "2.0.0",
     "hotkey_enabled": False,
     "hotkey": "ctrl+alt+h",
     "beep_on_toggle": True,
     "toast_on_toggle": True,
     "log_file": "logs/assistant.log",
     "log_level": "INFO",
+    "voice": {
+        "wake_word": "wake up HP",
+        "vosk_model_name": "vosk-model-small-en-in-0.4",
+        "vosk_model_url": "https://alphacephei.com/vosk/models/vosk-model-small-en-in-0.4.zip",
+        "stt_language": "en-IN",
+        "stt_timeout_seconds": 6,
+        "tts_voice": "en-IN-NeerjaNeural",
+        "sample_rate": 16000,
+    },
     "permissions": {
         "confirmation_timeout_seconds": 10,
         "audit_log_file": "logs/audit.log",
@@ -72,8 +81,8 @@ def load_config(config_path: str = "config.json") -> Dict[str, Any]:
             if isinstance(user_config, dict):
                 # Deep merge top-level keys
                 for key, val in user_config.items():
-                    if key == "permissions" and isinstance(val, dict):
-                        config["permissions"].update(val)
+                    if key in ("permissions", "voice") and isinstance(val, dict):
+                        config[key].update(val)
                     else:
                         config[key] = val
     except (json.JSONDecodeError, OSError) as e:

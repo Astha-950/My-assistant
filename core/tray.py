@@ -1,7 +1,8 @@
 """
 System tray integration for HP Assistant using pystray and Pillow.
 Provides dynamic green/red status icons, right-click menu controls with
-per-feature toggles (Voice, Gestures), checkmarks, notifications, and audio feedback.
+per-feature toggles (Voice, Gestures), checkmarks, mic active tooltip indicators,
+notifications, and audio feedback.
 """
 
 import logging
@@ -59,7 +60,8 @@ def _play_beep_async(is_on: bool) -> None:
 class TrayApp:
     """
     Manages the system tray icon, state sync, notifications, and menu actions.
-    Supports master switch and per-feature switches (Voice, Gestures) with checkmarks.
+    Supports master switch, per-feature switches (Voice, Gestures) with checkmarks,
+    and mic active tooltip indicator.
     """
 
     def __init__(
@@ -77,10 +79,6 @@ class TrayApp:
         # Cache pre-rendered icons
         self._icon_on = create_tray_icon_image(is_on=True)
         self._icon_off = create_tray_icon_image(is_on=False)
-
-        # Initial icon matches controller's initial state (OFF)
-        initial_icon = self._icon_on if self.controller.is_on else self._icon_off
-        initial_title = f"HP Assistant - {self.controller.state_name}"
 
         # Dynamic menu titles and state callbacks
         def voice_title(item: Any) -> str:
@@ -106,21 +104,28 @@ class TrayApp:
             item("Quit completely", self._on_quit),
         )
 
+        initial_icon = self._icon_on if self.controller.is_on else self._icon_off
+
         self._icon = pystray.Icon(
             name="HP_Assistant",
             icon=initial_icon,
-            title=initial_title,
+            title=self._get_title(),
             menu=menu,
         )
 
         # Register state listener with controller
         self.controller.add_listener(self._on_state_changed)
 
+    def _get_title(self) -> str:
+        """Dynamic tooltip title indicating master state and active mic status."""
+        mic_indicator = " [Mic Active]" if self.controller.is_feature_on("voice") else ""
+        return f"HP Assistant - {self.controller.state_name}{mic_indicator}"
+
     def _on_state_changed(self, is_on: bool) -> None:
         """Handle state change event from controller."""
         if self._icon:
             self._icon.icon = self._icon_on if is_on else self._icon_off
-            self._icon.title = f"HP Assistant - {'ON' if is_on else 'OFF'}"
+            self._icon.title = self._get_title()
             if hasattr(self._icon, "update_menu"):
                 try:
                     self._icon.update_menu()
@@ -170,11 +175,13 @@ class TrayApp:
 
         new_state = self.controller.toggle_feature("voice")
         self._logger.info("Tray action: Voice feature toggled to %s", "ON" if new_state else "OFF")
-        if self._icon and hasattr(self._icon, "update_menu"):
-            try:
-                self._icon.update_menu()
-            except Exception:
-                pass
+        if self._icon:
+            self._icon.title = self._get_title()
+            if hasattr(self._icon, "update_menu"):
+                try:
+                    self._icon.update_menu()
+                except Exception:
+                    pass
 
     def _on_toggle_gestures(self, icon: Optional[pystray.Icon] = None, item: Optional[Any] = None) -> None:
         """Menu handler: Toggle Gestures feature."""
@@ -189,11 +196,13 @@ class TrayApp:
 
         new_state = self.controller.toggle_feature("gestures")
         self._logger.info("Tray action: Gestures feature toggled to %s", "ON" if new_state else "OFF")
-        if self._icon and hasattr(self._icon, "update_menu"):
-            try:
-                self._icon.update_menu()
-            except Exception:
-                pass
+        if self._icon:
+            self._icon.title = self._get_title()
+            if hasattr(self._icon, "update_menu"):
+                try:
+                    self._icon.update_menu()
+                except Exception:
+                    pass
 
     def _on_quit(self, icon: Optional[pystray.Icon] = None, item: Optional[Any] = None) -> None:
         """

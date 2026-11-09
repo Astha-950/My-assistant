@@ -2,4 +2,9 @@ pystray>=0.19.5
 pillow>=10.0.0
 keyboard>=0.13.5
 pytest>=7.0.0
-
+sounddevice>=0.5.0
+speechrecognition>=3.14.0
+vosk>=0.3.45
+edge-tts>=7.0.0
+pygame-ce>=2.5.0
+pyttsx3>=2.90
