@@ -1,10 +1,41 @@
 {
   "app_name": "HP Assistant",
-  "version": "1.0.0",
+  "version": "1.5.0",
   "hotkey_enabled": false,
   "hotkey": "ctrl+alt+h",
   "beep_on_toggle": true,
   "toast_on_toggle": true,
   "log_file": "logs/assistant.log",
-  "log_level": "INFO"
+  "log_level": "INFO",
+  "permissions": {
+    "confirmation_timeout_seconds": 10,
+    "audit_log_file": "logs/audit.log",
+    "safe": [
+      "volume",
+      "scroll",
+      "screenshot",
+      "open_app",
+      "media_play_pause",
+      "window_switch",
+      "cursor_move",
+      "click"
+    ],
+    "confirm": [
+      "close_window",
+      "shutdown",
+      "restart",
+      "delete_file",
+      "type_text",
+      "run_command",
+      "send_message",
+      "cut",
+      "drag_drop"
+    ],
+    "blocked": [
+      "format_drive",
+      "registry_edit",
+      "disable_security",
+      "install_software"
+    ]
+  }
 }

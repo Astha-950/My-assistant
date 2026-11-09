@@ -1,11 +1,11 @@
 """
 System tray integration for HP Assistant using pystray and Pillow.
-Provides dynamic green/red status icons, notification feedback, and right-click menu controls.
+Provides dynamic green/red status icons, right-click menu controls with
+per-feature toggles (Voice, Gestures), checkmarks, notifications, and audio feedback.
 """
 
 import logging
 import os
-import sys
 import threading
 from typing import Any, Callable, Dict, Optional
 from PIL import Image, ImageDraw
@@ -59,6 +59,7 @@ def _play_beep_async(is_on: bool) -> None:
 class TrayApp:
     """
     Manages the system tray icon, state sync, notifications, and menu actions.
+    Supports master switch and per-feature switches (Voice, Gestures) with checkmarks.
     """
 
     def __init__(
@@ -81,10 +82,26 @@ class TrayApp:
         initial_icon = self._icon_on if self.controller.is_on else self._icon_off
         initial_title = f"HP Assistant - {self.controller.state_name}"
 
-        # Setup menu
+        # Dynamic menu titles and state callbacks
+        def voice_title(item: Any) -> str:
+            return f"Voice: {'ON' if self.controller.is_feature_on('voice') else 'OFF'}"
+
+        def is_voice_checked(item: Any) -> bool:
+            return self.controller.is_feature_on("voice")
+
+        def gestures_title(item: Any) -> str:
+            return f"Gestures: {'ON' if self.controller.is_feature_on('gestures') else 'OFF'}"
+
+        def is_gestures_checked(item: Any) -> bool:
+            return self.controller.is_feature_on("gestures")
+
+        # Setup menu with Master controls, Feature toggles with checkmarks, and Quit
         menu = pystray.Menu(
             item("Turn ON", self._on_turn_on),
             item("Turn OFF", self._on_turn_off),
+            pystray.Menu.SEPARATOR,
+            item(voice_title, self._on_toggle_voice, checked=is_voice_checked),
+            item(gestures_title, self._on_toggle_gestures, checked=is_gestures_checked),
             pystray.Menu.SEPARATOR,
             item("Quit completely", self._on_quit),
         )
@@ -104,6 +121,11 @@ class TrayApp:
         if self._icon:
             self._icon.icon = self._icon_on if is_on else self._icon_off
             self._icon.title = f"HP Assistant - {'ON' if is_on else 'OFF'}"
+            if hasattr(self._icon, "update_menu"):
+                try:
+                    self._icon.update_menu()
+                except Exception:
+                    pass
 
         # Beep feedback
         if self.config.get("beep_on_toggle", True):
@@ -126,19 +148,57 @@ class TrayApp:
                 self._logger.debug("Failed to show toast notification: %s", e)
 
     def _on_turn_on(self, icon: Optional[pystray.Icon] = None, item: Optional[Any] = None) -> None:
-        """Menu handler: Turn ON."""
-        self._logger.info("Tray action: Turn ON requested")
+        """Menu handler: Turn ON Master switch."""
+        self._logger.info("Tray action: Master Turn ON requested")
         self.controller.turn_on()
 
     def _on_turn_off(self, icon: Optional[pystray.Icon] = None, item: Optional[Any] = None) -> None:
-        """Menu handler: Turn OFF."""
-        self._logger.info("Tray action: Turn OFF requested")
+        """Menu handler: Turn OFF Master switch (forces all features OFF)."""
+        self._logger.info("Tray action: Master Turn OFF requested")
         self.controller.turn_off()
+
+    def _on_toggle_voice(self, icon: Optional[pystray.Icon] = None, item: Optional[Any] = None) -> None:
+        """Menu handler: Toggle Voice feature."""
+        if not self.controller.is_on:
+            self._logger.warning("Cannot toggle voice: Master is OFF")
+            if self._icon and hasattr(self._icon, "notify"):
+                try:
+                    self._icon.notify("Master switch is OFF. Turn Master ON first.", "HP Assistant")
+                except Exception:
+                    pass
+            return
+
+        new_state = self.controller.toggle_feature("voice")
+        self._logger.info("Tray action: Voice feature toggled to %s", "ON" if new_state else "OFF")
+        if self._icon and hasattr(self._icon, "update_menu"):
+            try:
+                self._icon.update_menu()
+            except Exception:
+                pass
+
+    def _on_toggle_gestures(self, icon: Optional[pystray.Icon] = None, item: Optional[Any] = None) -> None:
+        """Menu handler: Toggle Gestures feature."""
+        if not self.controller.is_on:
+            self._logger.warning("Cannot toggle gestures: Master is OFF")
+            if self._icon and hasattr(self._icon, "notify"):
+                try:
+                    self._icon.notify("Master switch is OFF. Turn Master ON first.", "HP Assistant")
+                except Exception:
+                    pass
+            return
+
+        new_state = self.controller.toggle_feature("gestures")
+        self._logger.info("Tray action: Gestures feature toggled to %s", "ON" if new_state else "OFF")
+        if self._icon and hasattr(self._icon, "update_menu"):
+            try:
+                self._icon.update_menu()
+            except Exception:
+                pass
 
     def _on_quit(self, icon: Optional[pystray.Icon] = None, item: Optional[Any] = None) -> None:
         """
         Menu handler: Quit completely.
-        Calls turn_off(), stops tray icon, invokes cleanup, and fully exits the process.
+        Calls turn_off() (which forces features off), stops tray icon, invokes cleanup, and fully exits.
         """
         self._logger.info("Tray action: Quit completely requested. Shutting down...")
         try:

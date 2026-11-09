@@ -1,6 +1,6 @@
 """
-HP Assistant - Stage 1 Entry Point
-Desktop Assistant Skeleton & Master Controller
+HP Assistant - Stage 1.5 Entry Point
+Desktop Assistant Skeleton, Master & Per-Feature Toggles, and Security Permission Gateway
 """
 
 import logging
@@ -11,6 +11,7 @@ from typing import Optional
 
 from core.config import load_config, setup_logging
 from core.controller import AssistantController, DummyModule
+from core.permissions import permissions
 from core.tray import TrayApp
 
 
@@ -21,9 +22,9 @@ def main() -> None:
     # 2. Setup logging (logs/ folder, ignored by git)
     logger = setup_logging(config)
     logger.info("==========================================")
-    logger.info("Starting HP Assistant (Stage 1)")
-    logger.info("Version: %s", config.get("version", "1.0.0"))
-    logger.info("Default State: OFF")
+    logger.info("Starting HP Assistant (Stage 1.5)")
+    logger.info("Version: %s", config.get("version", "1.5.0"))
+    logger.info("Default State: Master OFF | Voice OFF | Gestures OFF")
     logger.info("==========================================")
 
     # 3. Initialize Controller (starts OFF by default)
@@ -34,7 +35,11 @@ def main() -> None:
     controller.register_module(dummy)
     logger.info("Dummy module '%s' registered with controller", dummy.name)
 
-    # 5. Hotkey management
+    # 5. Initialize Permissions Gateway
+    permissions.reload_config(config)
+    logger.info("Permissions gateway loaded. Safe, Confirm, and Blocked tiers active.")
+
+    # 6. Hotkey management
     hotkey_enabled = config.get("hotkey_enabled", False)
     hotkey_str = config.get("hotkey", "ctrl+alt+h")
     hotkey_registered = False
@@ -65,7 +70,7 @@ def main() -> None:
             "Zero keyboard or mouse hooks installed."
         )
 
-    # 6. Initialize Tray Application
+    # 7. Initialize Tray Application
     tray = TrayApp(
         controller=controller,
         config=config,
@@ -92,7 +97,7 @@ def main() -> None:
 
     logger.info("HP Assistant running in system tray. Right-click tray icon to manage.")
 
-    # 7. Start tray icon (blocks until quit)
+    # 8. Start tray icon (blocks until quit)
     try:
         tray.run()
     except Exception as e:

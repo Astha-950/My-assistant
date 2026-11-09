@@ -269,3 +269,4 @@ def test_logging_events_with_timestamp() -> None:
     lines = output.strip().split("\n")
     for line in lines:
         assert len(line) > 10
+

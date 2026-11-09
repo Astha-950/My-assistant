@@ -1,12 +1,13 @@
 """
 Master controller for HP Assistant.
-Maintains application state (ON/OFF) and manages registered module lifecycles.
+Maintains application state (ON/OFF), manages per-feature toggles (voice, gestures),
+and manages registered module lifecycles.
 """
 
 from abc import ABC, abstractmethod
 import logging
 import threading
-from typing import Any, Callable, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 
 class BaseModule(ABC):
@@ -60,25 +61,31 @@ class AssistantController:
     """
     Thread-safe, idempotent master controller for HP Assistant.
     Default state is OFF every time the application starts.
+    Manages master toggle and sub-feature toggles (voice, gestures).
     """
 
+    SUPPORTED_FEATURES = ("voice", "gestures")
+
     def __init__(self, logger: Optional[logging.Logger] = None) -> None:
-        self._is_on: bool = False  # Always OFF by default
+        self._is_on: bool = False  # Master switch defaults to OFF
         self._lock: threading.RLock = threading.RLock()
-        self._modules: List[Any] = []
-        self._listeners: List[Callable[[bool], None]] = []
+        # Per-feature switches default to OFF on every app start
+        self._features: Dict[str, bool] = {feat: False for feat in self.SUPPORTED_FEATURES}
+        # List of (module_instance, feature_name_or_None)
+        self._modules: List[Tuple[Any, Optional[str]]] = []
+        self._listeners: List[Callable[..., None]] = []
         self._logger = logger or logging.getLogger("HP_Assistant.Controller")
-        self._logger.info("[EVENT] Controller initialized. Master state: OFF")
+        self._logger.info("[EVENT] Controller initialized. Master state: OFF | Features: %s", self._features)
 
     @property
     def is_on(self) -> bool:
-        """Returns True if the assistant is ON, False otherwise."""
+        """Returns True if the master assistant state is ON, False otherwise."""
         with self._lock:
             return self._is_on
 
     @property
     def is_off(self) -> bool:
-        """Returns True if the assistant is OFF, False otherwise."""
+        """Returns True if the master assistant state is OFF, False otherwise."""
         with self._lock:
             return not self._is_on
 
@@ -88,79 +95,121 @@ class AssistantController:
         with self._lock:
             return "ON" if self._is_on else "OFF"
 
-    def register_module(self, module: Any) -> None:
+    def is_feature_on(self, feature_name: str) -> bool:
+        """
+        Returns True if the feature is ON.
+        Voice and gestures can ONLY be ON when master is ON.
+        """
+        feat = feature_name.lower()
+        with self._lock:
+            return self._is_on and self._features.get(feat, False)
+
+    def get_feature_states(self) -> Dict[str, bool]:
+        """Returns a copy of all feature states."""
+        with self._lock:
+            return {
+                feat: (self._is_on and self._features.get(feat, False))
+                for feat in self._features
+            }
+
+    def register_module(self, module: Any, feature: Optional[str] = None) -> None:
         """
         Register a module that implements start() and stop().
-        If the controller is currently ON, start() is called immediately.
+        Optional feature specifies feature grouping ('voice', 'gestures', or None for core).
+        If the feature/master is currently active, start() is called immediately.
         """
         if not hasattr(module, "start") or not callable(getattr(module, "start")):
             raise TypeError(f"Module '{module}' must implement callable start() method")
         if not hasattr(module, "stop") or not callable(getattr(module, "stop")):
             raise TypeError(f"Module '{module}' must implement callable stop() method")
 
+        feat = feature.lower() if feature is not None else None
+        mod_name = getattr(module, "name", module.__class__.__name__)
+
         with self._lock:
-            if module not in self._modules:
-                self._modules.append(module)
-                mod_name = getattr(module, "name", module.__class__.__name__)
-                self._logger.info("Registered module: %s", mod_name)
-                # If currently ON, start newly registered module
-                if self._is_on:
-                    try:
-                        module.start()
-                    except Exception as e:
-                        self._logger.error("Error starting newly registered module %s: %s", mod_name, e, exc_info=True)
+            # Check if module already registered
+            for existing_mod, _ in self._modules:
+                if existing_mod is module:
+                    return
+
+            if feat is not None and feat not in self._features:
+                self._features[feat] = False
+
+            self._modules.append((module, feat))
+            self._logger.info("Registered module: %s (feature: %s)", mod_name, feat or "core")
+
+            # If the relevant feature or master is already ON, start immediately
+            should_start = False
+            if feat is None:
+                should_start = self._is_on
+            else:
+                should_start = self.is_feature_on(feat)
+
+            if should_start:
+                try:
+                    module.start()
+                except Exception as e:
+                    self._logger.error("Error starting newly registered module %s: %s", mod_name, e, exc_info=True)
 
     def unregister_module(self, module: Any) -> bool:
         """
-        Unregister a module. If the controller is ON, the module is stopped first.
+        Unregister a module. If currently active, the module is stopped first.
         """
         with self._lock:
-            if module in self._modules:
-                mod_name = getattr(module, "name", module.__class__.__name__)
-                if self._is_on:
-                    try:
-                        module.stop()
-                    except Exception as e:
-                        self._logger.error("Error stopping module %s during unregister: %s", mod_name, e)
-                self._modules.remove(module)
-                self._logger.info("Unregistered module: %s", mod_name)
-                return True
+            for item in list(self._modules):
+                existing_mod, feat = item
+                if existing_mod is module:
+                    mod_name = getattr(module, "name", module.__class__.__name__)
+                    is_active = self._is_on if feat is None else self.is_feature_on(feat)
+                    if is_active:
+                        try:
+                            module.stop()
+                        except Exception as e:
+                            self._logger.error("Error stopping module %s during unregister: %s", mod_name, e)
+                    self._modules.remove(item)
+                    self._logger.info("Unregistered module: %s", mod_name)
+                    return True
             return False
 
-    def get_registered_modules(self) -> List[Any]:
-        """Returns a copy of registered modules."""
+    def get_registered_modules(self, feature: Optional[str] = None) -> List[Any]:
+        """Returns registered modules, optionally filtered by feature."""
         with self._lock:
-            return list(self._modules)
+            if feature is None:
+                return [mod for mod, _ in self._modules]
+            feat = feature.lower()
+            return [mod for mod, mod_feat in self._modules if mod_feat == feat]
 
-    def add_listener(self, callback: Callable[[bool], None]) -> None:
-        """Register a callback for state changes. Receives bool (True for ON, False for OFF)."""
+    def add_listener(self, callback: Callable[..., None]) -> None:
+        """Register a callback for state changes."""
         with self._lock:
             if callback not in self._listeners:
                 self._listeners.append(callback)
 
-    def remove_listener(self, callback: Callable[[bool], None]) -> None:
+    def remove_listener(self, callback: Callable[..., None]) -> None:
         """Remove a previously registered state change callback."""
         with self._lock:
             if callback in self._listeners:
                 self._listeners.remove(callback)
 
     def _notify_listeners(self, state: bool) -> None:
-        """Notify all listeners of a state change outside critical lock section where possible."""
+        """Notify all listeners of a state change."""
         listeners_snapshot = []
         with self._lock:
             listeners_snapshot = list(self._listeners)
 
         for listener in listeners_snapshot:
             try:
+                # Support single-argument listeners (backward compatible)
                 listener(state)
             except Exception as e:
                 self._logger.error("Error in state change listener: %s", e, exc_info=True)
 
     def turn_on(self) -> bool:
         """
-        Turn the assistant ON. Calls start() on all registered modules.
-        Thread-safe and idempotent (calling turn_on when already ON is a no-op).
-        Returns True if state changed from OFF to ON, False if already ON.
+        Turn master state ON. Starts general/core modules.
+        Sub-features (voice, gestures) remain in their configured state (OFF by default)
+        and can be toggled independently.
+        Thread-safe and idempotent.
         """
         with self._lock:
             if self._is_on:
@@ -170,23 +219,24 @@ class AssistantController:
             self._is_on = True
             self._logger.info("[EVENT] Master State changed: ON")
 
-            for module in self._modules:
-                mod_name = getattr(module, "name", module.__class__.__name__)
-                try:
-                    self._logger.debug("Starting module: %s", mod_name)
-                    module.start()
-                except Exception as e:
-                    self._logger.error("Failed to start module %s: %s", mod_name, e, exc_info=True)
+            # Start general (non-feature-specific) modules
+            for module, feat in self._modules:
+                if feat is None:
+                    mod_name = getattr(module, "name", module.__class__.__name__)
+                    try:
+                        self._logger.debug("Starting core module: %s", mod_name)
+                        module.start()
+                    except Exception as e:
+                        self._logger.error("Failed to start module %s: %s", mod_name, e, exc_info=True)
 
         self._notify_listeners(True)
         return True
 
     def turn_off(self) -> bool:
         """
-        Turn the assistant OFF. Calls stop() on all registered modules
-        and confirms every resource is released.
-        Thread-safe and idempotent (calling turn_off when already OFF is a no-op).
-        Returns True if state changed from ON to OFF, False if already OFF.
+        Turn master state OFF.
+        Master OFF forces both voice and gestures OFF and releases all resources.
+        Thread-safe and idempotent.
         """
         with self._lock:
             if not self._is_on:
@@ -194,19 +244,38 @@ class AssistantController:
                 return False
 
             all_released = True
-            # Stop modules in reverse order of registration
-            for module in reversed(self._modules):
-                mod_name = getattr(module, "name", module.__class__.__name__)
-                try:
-                    self._logger.debug("Stopping module: %s", mod_name)
-                    module.stop()
-                    # Verify resource release if supported by module
-                    if getattr(module, "is_running", False):
+
+            # 1. Force all feature modules OFF and mark features as OFF
+            for feat in list(self._features.keys()):
+                if self._features[feat]:
+                    self._logger.info("[EVENT] Master OFF forcing feature '%s' OFF", feat)
+                    for module, mod_feat in reversed(self._modules):
+                        if mod_feat == feat:
+                            mod_name = getattr(module, "name", module.__class__.__name__)
+                            try:
+                                self._logger.debug("Stopping feature module %s (%s)", mod_name, feat)
+                                module.stop()
+                                if getattr(module, "is_running", False):
+                                    all_released = False
+                                    self._logger.warning("Module %s reports still running after stop()", mod_name)
+                            except Exception as e:
+                                all_released = False
+                                self._logger.error("Error stopping module %s: %s", mod_name, e, exc_info=True)
+                    self._features[feat] = False
+
+            # 2. Stop core modules in reverse order
+            for module, mod_feat in reversed(self._modules):
+                if mod_feat is None:
+                    mod_name = getattr(module, "name", module.__class__.__name__)
+                    try:
+                        self._logger.debug("Stopping core module: %s", mod_name)
+                        module.stop()
+                        if getattr(module, "is_running", False):
+                            all_released = False
+                            self._logger.warning("Module %s reports still running after stop()", mod_name)
+                    except Exception as e:
                         all_released = False
-                        self._logger.warning("Module %s reports still running after stop()", mod_name)
-                except Exception as e:
-                    all_released = False
-                    self._logger.error("Error stopping module %s: %s", mod_name, e, exc_info=True)
+                        self._logger.error("Error stopping module %s: %s", mod_name, e, exc_info=True)
 
             self._is_on = False
             self._logger.info(
@@ -220,7 +289,6 @@ class AssistantController:
     def toggle(self) -> bool:
         """
         Toggle master state between ON and OFF.
-        Thread-safe. Returns the new state (True = ON, False = OFF).
         """
         with self._lock:
             if self._is_on:
@@ -229,3 +297,82 @@ class AssistantController:
             else:
                 self.turn_on()
                 return True
+
+    def turn_on_feature(self, feature_name: str) -> bool:
+        """
+        Turn a specific feature ON (e.g. 'voice' or 'gestures').
+        Voice and gestures can only run when master is ON.
+        Thread-safe and idempotent.
+        """
+        feat = feature_name.lower()
+        with self._lock:
+            if not self._is_on:
+                self._logger.warning("Cannot turn on feature '%s': Master is OFF", feat)
+                return False
+
+            if self._features.get(feat, False):
+                self._logger.info("[IDEMPOTENT] Feature '%s' is already ON. Ignored.", feat)
+                return False
+
+            self._features[feat] = True
+            self._logger.info("[EVENT] Feature State changed: %s = ON", feat)
+
+            for module, mod_feat in self._modules:
+                if mod_feat == feat:
+                    mod_name = getattr(module, "name", module.__class__.__name__)
+                    try:
+                        self._logger.debug("Starting %s module: %s", feat, mod_name)
+                        module.start()
+                    except Exception as e:
+                        self._logger.error("Failed to start %s module %s: %s", feat, mod_name, e, exc_info=True)
+
+        self._notify_listeners(self._is_on)
+        return True
+
+    def turn_off_feature(self, feature_name: str) -> bool:
+        """
+        Turn a specific feature OFF (e.g. 'voice' or 'gestures').
+        Stops all modules associated with the feature and confirms release.
+        Thread-safe and idempotent.
+        """
+        feat = feature_name.lower()
+        with self._lock:
+            if not self._features.get(feat, False):
+                self._logger.info("[IDEMPOTENT] Feature '%s' is already OFF. Ignored.", feat)
+                return False
+
+            all_released = True
+            for module, mod_feat in reversed(self._modules):
+                if mod_feat == feat:
+                    mod_name = getattr(module, "name", module.__class__.__name__)
+                    try:
+                        self._logger.debug("Stopping %s module: %s", feat, mod_name)
+                        module.stop()
+                        if getattr(module, "is_running", False):
+                            all_released = False
+                            self._logger.warning("Module %s reports still running after stop()", mod_name)
+                    except Exception as e:
+                        all_released = False
+                        self._logger.error("Error stopping %s module %s: %s", feat, mod_name, e, exc_info=True)
+
+            self._features[feat] = False
+            self._logger.info(
+                "[EVENT] Feature State changed: %s = OFF | Released: %s",
+                feat,
+                all_released,
+            )
+
+        self._notify_listeners(self._is_on)
+        return True
+
+    def toggle_feature(self, feature_name: str) -> bool:
+        """
+        Toggle a specific feature ON/OFF.
+        """
+        feat = feature_name.lower()
+        with self._lock:
+            if self.is_feature_on(feat):
+                self.turn_off_feature(feat)
+                return False
+            else:
+                return self.turn_on_feature(feat)

@@ -10,13 +10,44 @@ from typing import Any, Dict
 
 DEFAULT_CONFIG: Dict[str, Any] = {
     "app_name": "HP Assistant",
-    "version": "1.0.0",
+    "version": "1.5.0",
     "hotkey_enabled": False,
     "hotkey": "ctrl+alt+h",
     "beep_on_toggle": True,
     "toast_on_toggle": True,
     "log_file": "logs/assistant.log",
     "log_level": "INFO",
+    "permissions": {
+        "confirmation_timeout_seconds": 10,
+        "audit_log_file": "logs/audit.log",
+        "safe": [
+            "volume",
+            "scroll",
+            "screenshot",
+            "open_app",
+            "media_play_pause",
+            "window_switch",
+            "cursor_move",
+            "click",
+        ],
+        "confirm": [
+            "close_window",
+            "shutdown",
+            "restart",
+            "delete_file",
+            "type_text",
+            "run_command",
+            "send_message",
+            "cut",
+            "drag_drop",
+        ],
+        "blocked": [
+            "format_drive",
+            "registry_edit",
+            "disable_security",
+            "install_software",
+        ],
+    },
 }
 
 
@@ -25,7 +56,7 @@ def load_config(config_path: str = "config.json") -> Dict[str, Any]:
     Safely load configuration from a JSON file.
     Falls back to DEFAULT_CONFIG for any missing keys or if the file cannot be parsed.
     """
-    config: Dict[str, Any] = dict(DEFAULT_CONFIG)
+    config: Dict[str, Any] = json.loads(json.dumps(DEFAULT_CONFIG))
 
     if not os.path.exists(config_path):
         try:
@@ -39,7 +70,12 @@ def load_config(config_path: str = "config.json") -> Dict[str, Any]:
         with open(config_path, "r", encoding="utf-8") as f:
             user_config = json.load(f)
             if isinstance(user_config, dict):
-                config.update(user_config)
+                # Deep merge top-level keys
+                for key, val in user_config.items():
+                    if key == "permissions" and isinstance(val, dict):
+                        config["permissions"].update(val)
+                    else:
+                        config[key] = val
     except (json.JSONDecodeError, OSError) as e:
         print(f"Warning: Failed to load config from {config_path} ({e}). Using defaults.", file=sys.stderr)
 
