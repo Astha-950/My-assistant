@@ -1,0 +1,10 @@
+{
+  "app_name": "HP Assistant",
+  "version": "1.0.0",
+  "hotkey_enabled": false,
+  "hotkey": "ctrl+alt+h",
+  "beep_on_toggle": true,
+  "toast_on_toggle": true,
+  "log_file": "logs/assistant.log",
+  "log_level": "INFO"
+}
